@@ -1,9 +1,9 @@
 use arboard::Clipboard;
 use clap::Parser;
+use fastblur::gaussian_blur;
 use image::{
-    imageops::{blur, resize, FilterType},
-    io::Reader as ImageReader,
-    DynamicImage, ImageBuffer, Rgb,
+    imageops::FilterType, io::Reader as ImageReader, DynamicImage, GenericImageView, ImageBuffer,
+    Pixel, Rgb, RgbImage,
 };
 use std::cmp::{max, min};
 
@@ -66,15 +66,29 @@ fn main() {
     let factor = min(width, height);
     let resized_width = width * sqside / factor;
     let resized_height = height * sqside / factor;
-    let mut resized_blurred = image.clone();
-    resized_blurred = DynamicImage::ImageRgba8(resize(
-        &resized_blurred,
-        resized_width,
-        resized_height,
-        FilterType::Triangle,
-    ));
+    let resized = image.resize(resized_width, resized_height, FilterType::Triangle);
     println!("created resized background");
-    resized_blurred = DynamicImage::ImageRgba8(blur(&resized_blurred, 10f32));
+    let resized_pixels = resized.pixels();
+    let mut resized_blurred_colors: Vec<[u8; 3]> = Vec::new();
+    for (_, _, pixel) in resized_pixels {
+        let rgb = pixel.to_rgb();
+        resized_blurred_colors.push(rgb.0);
+    }
+    gaussian_blur(
+        &mut resized_blurred_colors,
+        resized_width as usize,
+        resized_height as usize,
+        16.,
+    );
+    let mut resized_blurred = RgbImage::new(resized_width, resized_height);
+    let mut i = 0;
+    for y in 0..resized_height {
+        for x in 0..resized_width {
+            resized_blurred.put_pixel(x, y, Rgb(resized_blurred_colors[i]));
+            i += 1;
+        }
+    }
+    let resized_blurred = DynamicImage::ImageRgb8(resized_blurred);
     println!("blurred background");
     _ = resized_blurred.save("out.png");
 }
