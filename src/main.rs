@@ -67,13 +67,14 @@ fn main() {
     let resized_width = width * sqside / factor;
     let resized_height = height * sqside / factor;
     let mut resized_blurred = image.clone();
-    resize(
-        &mut resized_blurred,
+    resized_blurred = DynamicImage::ImageRgba8(resize(
+        &resized_blurred,
         resized_width,
         resized_height,
         FilterType::Triangle,
-    );
-    blur(&mut resized_blurred, 0.6);
-    println!("created resized, blurred background");
+    ));
+    println!("created resized background");
+    resized_blurred = DynamicImage::ImageRgba8(blur(&resized_blurred, 10f32));
+    println!("blurred background");
     _ = resized_blurred.save("out.png");
 }
