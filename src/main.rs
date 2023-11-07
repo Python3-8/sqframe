@@ -1,6 +1,11 @@
 use arboard::Clipboard;
 use clap::Parser;
-use image::{io::Reader as ImageReader, DynamicImage, ImageBuffer};
+use image::{
+    imageops::{blur, resize, FilterType},
+    io::Reader as ImageReader,
+    DynamicImage, ImageBuffer, Rgb,
+};
+use std::cmp::{max, min};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -33,20 +38,42 @@ fn main() {
             println!("accessed clipboard");
             match clipboard.get_image() {
                 Ok(img) => {
+                    println!("read clipboard image");
                     match ImageBuffer::from_raw(
                         img.width.try_into().unwrap(),
                         img.height.try_into().unwrap(),
                         img.bytes.into_owned(),
                     ) {
-                        Some(img) => DynamicImage::ImageRgba8(img),
+                        Some(img) => {
+                            println!("constructed clipboard image");
+                            DynamicImage::ImageRgba8(img)
+                        }
                         None => {
-                            return eprintln!("couldn't construct image (perhaps it is empty?)")
+                            return eprintln!(
+                                "couldn't construct clipboard image (perhaps it is empty?)"
+                            )
                         }
                     }
                 }
-                Err(e) => return eprintln!("error reading image: {e}"),
+                Err(e) => return eprintln!("error reading clipboard image: {e}"),
             }
         }
     };
-    image.save("cb.png").expect("bruhh couldn't even save");
+    _ = image.save("in.png");
+    let (width, height) = (image.width(), image.height());
+    let sqside = max(width, height);
+    let bgimage = ImageBuffer::from_fn(sqside, sqside, |x, y| Rgb([255, 255, 255]));
+    let factor = min(width, height);
+    let resized_width = width * sqside / factor;
+    let resized_height = height * sqside / factor;
+    let mut resized_blurred = image.clone();
+    resize(
+        &mut resized_blurred,
+        resized_width,
+        resized_height,
+        FilterType::Triangle,
+    );
+    blur(&mut resized_blurred, 0.6);
+    println!("created resized, blurred background");
+    _ = resized_blurred.save("out.png");
 }
