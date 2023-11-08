@@ -81,13 +81,35 @@ fn main() {
     println!("creating background...");
     let (width, height) = (image.width(), image.height());
     let sqside = max(width, height);
-    let bgimage = ImageBuffer::from_fn(sqside, sqside, |x, y| Rgb([255, 255, 255]));
     let factor = min(width, height);
     let resized_width = width * sqside / factor;
     let resized_height = height * sqside / factor;
     let mut bg = image.resize(resized_width, resized_height, FilterType::Triangle);
-    println!("resizing done");
-    bg = blur(&bg, 32.);
-    println!("blurred background");
-    _ = bg.save("out.png");
+    println!("upscale: done");
+    bg = bg.crop(
+        (resized_width - sqside) / 2,
+        (resized_height - sqside) / 2,
+        sqside,
+        sqside,
+    );
+    println!("square crop: done");
+    bg = blur(&bg, 16.);
+    println!("blur background: done");
+    println!("background created");
+    println!("constructing final image");
+    let x_rng = ((sqside - image.width()) / 2)..((sqside + image.width()) / 2);
+    let y_rng = ((sqside - image.height()) / 2)..((sqside + image.height()) / 2);
+    let mut final_image = RgbImage::new(sqside, sqside);
+    let mut orig_pixels = image.pixels();
+    for y in 0..sqside {
+        for x in 0..sqside {
+            if x_rng.contains(&x) && y_rng.contains(&y) {
+                final_image.put_pixel(x, y, orig_pixels.next().unwrap().2.to_rgb());
+            } else {
+                final_image.put_pixel(x, y, bg.get_pixel(x, y).to_rgb());
+            }
+        }
+    }
+    println!("done!");
+    _ = final_image.save("out.png");
 }
