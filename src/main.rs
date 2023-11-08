@@ -104,12 +104,14 @@ fn main() {
     for y in 0..sqside {
         for x in 0..sqside {
             if x_rng.contains(&x) && y_rng.contains(&y) {
-                final_image.put_pixel(x, y, orig_pixels.next().unwrap().2.to_rgb());
+                match orig_pixels.next() {
+                    Some(px) => final_image.put_pixel(x, y, px.2.to_rgb()),
+                    _ => {}
+                }
             } else {
                 final_image.put_pixel(x, y, bg.get_pixel(x, y).to_rgb());
             }
         }
     }
     println!("done!");
-    _ = final_image.save("out.png");
 }
