@@ -1,11 +1,19 @@
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
 use clap::Parser;
 use fastblur::gaussian_blur;
 use image::{
     imageops::FilterType, io::Reader as ImageReader, DynamicImage, GenericImageView, ImageBuffer,
     Pixel, Rgb, RgbImage,
 };
-use std::cmp::{max, min};
+use std::{
+    borrow::Cow,
+    cmp::{max, min},
+    env,
+    fs::rename,
+    io,
+    io::Write,
+    path::Path,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -19,13 +27,27 @@ struct Args {
     output_path: Option<String>,
 }
 
-fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
-    let (width, height) = (image.width(), image.height());
+fn get_colors(image: &DynamicImage) -> Vec<[u8; 3]> {
     let pixels = image.pixels();
     let mut colors: Vec<[u8; 3]> = Vec::new();
     for (_, _, pixel) in pixels {
         colors.push(pixel.to_rgb().0);
     }
+    colors
+}
+
+fn get_colors_alpha(image: &DynamicImage) -> Vec<[u8; 4]> {
+    let pixels = image.pixels();
+    let mut colors: Vec<[u8; 4]> = Vec::new();
+    for (_, _, pixel) in pixels {
+        colors.push(pixel.0);
+    }
+    colors
+}
+
+fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let mut colors = get_colors(&image);
     gaussian_blur(&mut colors, width as usize, height as usize, intensity);
     let mut blurred_image_buffer = RgbImage::new(width, height);
     let mut pixel_index = 0usize;
@@ -36,6 +58,34 @@ fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
         }
     }
     DynamicImage::ImageRgb8(blurred_image_buffer)
+}
+
+enum ConfirmResult {
+    Continue,
+    Stop,
+    IOError(io::Error),
+}
+
+fn confirm(msg: String) -> ConfirmResult {
+    let mut stdout = io::stdout();
+    let stdin = io::stdin();
+    let mut resp = String::new();
+    loop {
+        resp.clear();
+        print!("{msg}");
+        _ = stdout.flush();
+        match stdin.read_line(&mut resp) {
+            Ok(_) => {}
+            Err(e) => return ConfirmResult::IOError(e),
+        };
+        resp = resp.trim().to_lowercase();
+        if ["y".to_string(), "yes".to_string()].contains(&resp) {
+            return ConfirmResult::Continue;
+        }
+        if ["n".to_string(), "no".to_string()].contains(&resp) {
+            return ConfirmResult::Stop;
+        }
+    }
 }
 fn main() {
     let args = Args::parse();
@@ -77,7 +127,6 @@ fn main() {
             }
         }
     };
-    _ = image.save("in.png");
     println!("creating background...");
     let (width, height) = (image.width(), image.height());
     let sqside = max(width, height);
@@ -113,5 +162,70 @@ fn main() {
             }
         }
     }
+    let final_image = DynamicImage::ImageRgb8(final_image);
     println!("done!");
+    let temp_dir = env::temp_dir();
+    match args.output_path {
+        Some(out_path) => {
+            let output_path = out_path.clone();
+            let path = Path::new(&output_path);
+            if path.is_dir() || path.is_symlink() {
+                return eprintln!(
+                    "{output_path} is a directory or a symbolic link, cannot proceed"
+                );
+            }
+            if path.is_file() {
+                match confirm(format!(
+                    "{output_path} is an existing file. replace? [y/n]: "
+                )) {
+                    ConfirmResult::Continue => {
+                        let backup_path = temp_dir.join(Path::new("BACKUP"));
+                        match rename(&path, &backup_path) {
+                            Ok(_) => {
+                                println!("original file backed up to: {}", backup_path.display())
+                            }
+                            Err(e) => eprintln!("error backing up original file: {e}"),
+                        }
+                    }
+                    ConfirmResult::Stop => {
+                        return println!("please rerun with a different output path");
+                    }
+                    ConfirmResult::IOError(e) => {
+                        return eprintln!("error while trying to read stdin: {e}");
+                    }
+                }
+            }
+            match final_image.save(&output_path) {
+                Ok(_) => return println!("saved image!"),
+                Err(e) => return eprintln!("error saving image: {e}"),
+            };
+        }
+        None => {
+            let backup_path = temp_dir.join(Path::new("clipboard.png"));
+            match image.save(&backup_path) {
+                Ok(_) => {
+                    println!(
+                        "backed up original clipboard content to: {}",
+                        backup_path.display()
+                    );
+                }
+                Err(e) => eprintln!("error backing up original clipboard content: {e}"),
+            }
+            let bytes = get_colors_alpha(&final_image).join(&[][..]);
+            let image_data = ImageData {
+                width: sqside as usize,
+                height: sqside as usize,
+                bytes: Cow::from(&bytes),
+            };
+            let mut clipboard;
+            match Clipboard::new() {
+                Ok(cb) => clipboard = cb,
+                Err(e) => return eprintln!("error accessing clipboard: {e}"),
+            }
+            match clipboard.set_image(image_data) {
+                Ok(_) => return println!("edited image copied to clipboard!"),
+                Err(e) => return eprintln!("error copying edited image to clipboard: {e}"),
+            }
+        }
+    }
 }
