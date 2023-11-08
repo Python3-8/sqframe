@@ -19,6 +19,24 @@ struct Args {
     output_path: Option<String>,
 }
 
+fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
+    let (width, height) = (image.width(), image.height());
+    let pixels = image.pixels();
+    let mut colors: Vec<[u8; 3]> = Vec::new();
+    for (_, _, pixel) in pixels {
+        colors.push(pixel.to_rgb().0);
+    }
+    gaussian_blur(&mut colors, width as usize, height as usize, intensity);
+    let mut blurred_image_buffer = RgbImage::new(width, height);
+    let mut pixel_index = 0usize;
+    for y in 0..height {
+        for x in 0..width {
+            blurred_image_buffer.put_pixel(x, y, Rgb(colors[pixel_index]));
+            pixel_index += 1;
+        }
+    }
+    DynamicImage::ImageRgb8(blurred_image_buffer)
+}
 fn main() {
     let args = Args::parse();
     let image = match args.input_path {
@@ -60,35 +78,16 @@ fn main() {
         }
     };
     _ = image.save("in.png");
+    println!("creating background...");
     let (width, height) = (image.width(), image.height());
     let sqside = max(width, height);
     let bgimage = ImageBuffer::from_fn(sqside, sqside, |x, y| Rgb([255, 255, 255]));
     let factor = min(width, height);
     let resized_width = width * sqside / factor;
     let resized_height = height * sqside / factor;
-    let resized = image.resize(resized_width, resized_height, FilterType::Triangle);
-    println!("created resized background");
-    let resized_pixels = resized.pixels();
-    let mut resized_blurred_colors: Vec<[u8; 3]> = Vec::new();
-    for (_, _, pixel) in resized_pixels {
-        let rgb = pixel.to_rgb();
-        resized_blurred_colors.push(rgb.0);
-    }
-    gaussian_blur(
-        &mut resized_blurred_colors,
-        resized_width as usize,
-        resized_height as usize,
-        16.,
-    );
-    let mut resized_blurred = RgbImage::new(resized_width, resized_height);
-    let mut i = 0;
-    for y in 0..resized_height {
-        for x in 0..resized_width {
-            resized_blurred.put_pixel(x, y, Rgb(resized_blurred_colors[i]));
-            i += 1;
-        }
-    }
-    let resized_blurred = DynamicImage::ImageRgb8(resized_blurred);
+    let mut bg = image.resize(resized_width, resized_height, FilterType::Triangle);
+    println!("resizing done");
+    bg = blur(&bg, 32.);
     println!("blurred background");
-    _ = resized_blurred.save("out.png");
+    _ = bg.save("out.png");
 }
