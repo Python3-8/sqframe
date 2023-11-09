@@ -27,6 +27,7 @@ struct Args {
     output_path: Option<String>,
 }
 
+/// Returns a vector containing arrays of length 3 (R, G, B) corresponding to the pixels in the image
 fn get_colors(image: &DynamicImage) -> Vec<[u8; 3]> {
     let pixels = image.pixels();
     let mut colors: Vec<[u8; 3]> = Vec::new();
@@ -36,6 +37,7 @@ fn get_colors(image: &DynamicImage) -> Vec<[u8; 3]> {
     colors
 }
 
+/// Returns a vector containing arrays of length 4 (R, G, B, A) corresponding to the pixels in the image
 fn get_colors_alpha(image: &DynamicImage) -> Vec<[u8; 4]> {
     let pixels = image.pixels();
     let mut colors: Vec<[u8; 4]> = Vec::new();
@@ -45,6 +47,7 @@ fn get_colors_alpha(image: &DynamicImage) -> Vec<[u8; 4]> {
     colors
 }
 
+/// Returns a blurred (Gaussian blur) copy of the image, with `intensity` being the blur radius
 fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
     let (width, height) = (image.width(), image.height());
     let mut colors = get_colors(&image);
@@ -58,6 +61,28 @@ fn blur(image: &DynamicImage, intensity: f32) -> DynamicImage {
         }
     }
     DynamicImage::ImageRgb8(blurred_image_buffer)
+}
+
+/// Returns an image with `fg` overlaid on `bg`, assuming that `fg` can fit into `bg`
+fn overlay(bg: &DynamicImage, fg: &DynamicImage) -> DynamicImage {
+    let (bg_width, bg_height) = (bg.width(), bg.height());
+    let x_rng = ((bg_width - fg.width()) / 2)..((bg_width + fg.width()) / 2);
+    let y_rng = ((bg_height - fg.height()) / 2)..((bg_height + fg.height()) / 2);
+    let mut final_image = RgbImage::new(bg_width, bg_height);
+    let mut orig_pixels = fg.pixels();
+    for y in 0..bg_height {
+        for x in 0..bg_width {
+            if x_rng.contains(&x) && y_rng.contains(&y) {
+                match orig_pixels.next() {
+                    Some(px) => final_image.put_pixel(x, y, px.2.to_rgb()),
+                    _ => {}
+                }
+                continue;
+            }
+            final_image.put_pixel(x, y, bg.get_pixel(x, y).to_rgb());
+        }
+    }
+    DynamicImage::ImageRgb8(final_image)
 }
 
 enum ConfirmResult {
@@ -97,35 +122,33 @@ fn main() {
             },
             Err(e) => return eprintln!("error opening image: {e}"),
         },
-        None => {
-            let mut clipboard;
-            match Clipboard::new() {
-                Ok(cb) => clipboard = cb,
-                Err(e) => return eprintln!("error accessing clipboard: {e}"),
-            }
-            println!("accessed clipboard");
-            match clipboard.get_image() {
-                Ok(img) => {
-                    println!("read clipboard image");
-                    match ImageBuffer::from_raw(
-                        img.width.try_into().unwrap(),
-                        img.height.try_into().unwrap(),
-                        img.bytes.into_owned(),
-                    ) {
-                        Some(img) => {
-                            println!("constructed clipboard image");
-                            DynamicImage::ImageRgba8(img)
-                        }
-                        None => {
-                            return eprintln!(
-                                "couldn't construct clipboard image (perhaps it is empty?)"
-                            )
+        None => match Clipboard::new() {
+            Ok(mut clipboard) => {
+                println!("accessed clipboard");
+                match clipboard.get_image() {
+                    Ok(img) => {
+                        println!("read clipboard image");
+                        match ImageBuffer::from_raw(
+                            img.width.try_into().unwrap(),
+                            img.height.try_into().unwrap(),
+                            img.bytes.into_owned(),
+                        ) {
+                            Some(img) => {
+                                println!("constructed clipboard image");
+                                DynamicImage::ImageRgba8(img)
+                            }
+                            None => {
+                                return eprintln!(
+                                    "couldn't construct clipboard image (perhaps it is empty?)"
+                                )
+                            }
                         }
                     }
+                    Err(e) => return eprintln!("error reading clipboard image: {e}"),
                 }
-                Err(e) => return eprintln!("error reading clipboard image: {e}"),
             }
-        }
+            Err(e) => return eprintln!("error accessing clipboard: {e}"),
+        },
     };
     println!("creating background...");
     let (width, height) = (image.width(), image.height());
@@ -143,48 +166,41 @@ fn main() {
     );
     println!("square crop: done");
     bg = blur(&bg, 16.);
-    println!("blur background: done");
+    println!("gaussian blur: done");
     println!("background created");
     println!("constructing final image");
-    let x_rng = ((sqside - image.width()) / 2)..((sqside + image.width()) / 2);
-    let y_rng = ((sqside - image.height()) / 2)..((sqside + image.height()) / 2);
-    let mut final_image = RgbImage::new(sqside, sqside);
-    let mut orig_pixels = image.pixels();
-    for y in 0..sqside {
-        for x in 0..sqside {
-            if x_rng.contains(&x) && y_rng.contains(&y) {
-                match orig_pixels.next() {
-                    Some(px) => final_image.put_pixel(x, y, px.2.to_rgb()),
-                    _ => {}
-                }
-            } else {
-                final_image.put_pixel(x, y, bg.get_pixel(x, y).to_rgb());
-            }
-        }
-    }
-    let final_image = DynamicImage::ImageRgb8(final_image);
+    let final_image = overlay(&bg, &image);
     println!("done!");
     let temp_dir = env::temp_dir();
     match args.output_path {
         Some(out_path) => {
-            let output_path = out_path.clone();
-            let path = Path::new(&output_path);
-            if path.is_dir() || path.is_symlink() {
+            let output_path = Path::new(&out_path);
+            if output_path.is_dir() || output_path.is_symlink() {
                 return eprintln!(
-                    "{output_path} is a directory or a symbolic link, cannot proceed"
+                    "{:?} is a directory or a symbolic link, cannot proceed",
+                    output_path.display()
                 );
             }
-            if path.is_file() {
+            if output_path.is_file() {
                 match confirm(format!(
-                    "{output_path} is an existing file. replace? [y/n]: "
+                    "{:?} is an existing file. replace? [y/n]: ",
+                    output_path.display()
                 )) {
                     ConfirmResult::Continue => {
                         let backup_path = temp_dir.join(Path::new("BACKUP"));
-                        match rename(&path, &backup_path) {
+                        match rename(&output_path, &backup_path) {
                             Ok(_) => {
-                                println!("original file backed up to: {}", backup_path.display())
+                                println!(
+                                    "original file at {:?} backed up to: {:?}",
+                                    output_path.display(),
+                                    backup_path.display()
+                                )
                             }
-                            Err(e) => eprintln!("error backing up original file: {e}"),
+                            Err(e) => eprintln!(
+                                "error backing up original file at {:?}: {}",
+                                output_path.display(),
+                                e
+                            ),
                         }
                     }
                     ConfirmResult::Stop => {
@@ -195,9 +211,11 @@ fn main() {
                     }
                 }
             }
-            match final_image.save(&output_path) {
-                Ok(_) => return println!("saved image!"),
-                Err(e) => return eprintln!("error saving image: {e}"),
+            match final_image.save(output_path) {
+                Ok(_) => return println!("saved image to {:?}!", output_path.display()),
+                Err(e) => {
+                    return eprintln!("error saving image to {:?}: {}", output_path.display(), e)
+                }
             };
         }
         None => {
@@ -205,7 +223,7 @@ fn main() {
             match image.save(&backup_path) {
                 Ok(_) => {
                     println!(
-                        "backed up original clipboard content to: {}",
+                        "backed up original clipboard content to: {:?}",
                         backup_path.display()
                     );
                 }
@@ -217,14 +235,12 @@ fn main() {
                 height: sqside as usize,
                 bytes: Cow::from(&bytes),
             };
-            let mut clipboard;
             match Clipboard::new() {
-                Ok(cb) => clipboard = cb,
+                Ok(mut clipboard) => match clipboard.set_image(image_data) {
+                    Ok(_) => return println!("edited image copied to clipboard!"),
+                    Err(e) => return eprintln!("error copying edited image to clipboard: {e}"),
+                },
                 Err(e) => return eprintln!("error accessing clipboard: {e}"),
-            }
-            match clipboard.set_image(image_data) {
-                Ok(_) => return println!("edited image copied to clipboard!"),
-                Err(e) => return eprintln!("error copying edited image to clipboard: {e}"),
             }
         }
     }
