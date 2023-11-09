@@ -8,7 +8,7 @@ use image::{
 use std::{
     borrow::Cow,
     cmp::{max, min},
-    env,
+    env::temp_dir,
     fs::rename,
     io,
     io::Write,
@@ -180,7 +180,7 @@ fn main() {
     println!("constructing final image");
     let final_image = overlay(&bg, &image);
     println!("done!");
-    let temp_dir = env::temp_dir();
+    let temp_dir = temp_dir();
     match args.output_path {
         Some(out_path) => {
             let output_path = Path::new(&out_path);
@@ -213,7 +213,7 @@ fn main() {
                         }
                     }
                     ConfirmResult::Stop => {
-                        return println!("please rerun with a different output path");
+                        return println!("please rerun with a different output path, or without an output path (to copy the result to the clipboard)");
                     }
                     ConfirmResult::IOError(e) => {
                         return eprintln!("error while trying to read stdin: {e:?}");
@@ -228,33 +228,25 @@ fn main() {
             };
         }
         None => {
-            let backup_path = temp_dir.join(Path::new(&format!(
-                "CLIPBOARD{}.png",
-                get_timestamp_suffix()
-            )));
-            match image.save(&backup_path) {
-                Ok(_) => {
-                    println!(
-                        "backed up original clipboard content to: {:?}",
-                        backup_path.display()
-                    );
-                }
-                Err(e) => eprintln!("error backing up original clipboard content: {e:?}"),
-            }
-            let bytes = get_colors_alpha(&final_image).join(&[][..]);
-            let image_data = ImageData {
-                width: sqside as usize,
-                height: sqside as usize,
-                bytes: Cow::from(&bytes),
-            };
-            match Clipboard::new() {
-                Ok(mut clipboard) => match clipboard.set_image(image_data) {
-                    Ok(_) => return println!("edited image copied to clipboard!"),
-                    Err(e) => return eprintln!("error copying edited image to clipboard: {e:?}"),
+            match confirm("overwrite clipboard content with edited image? [y/n]: ".to_string()) {
+                ConfirmResult::Continue => {
+                    let bytes = get_colors_alpha(&final_image).join(&[][..]);
+                    let image_data = ImageData {
+                        width: sqside as usize,
+                        height: sqside as usize,
+                        bytes: Cow::from(&bytes),
+                    };
+                    match Clipboard::new() {
+                        Ok(mut clipboard) => match clipboard.set_image(image_data) {
+                            Ok(_) => return println!("edited image copied to clipboard!"),
+                            Err(e) => return eprintln!("error copying edited image to clipboard: {e:?}"),
+                        },
+                        Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
+                    }
                 },
-                Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
+                    ConfirmResult::Stop => return println!("please rerun with the clipboard content backed up, or with an output path specified (see '--help')"),
+                    ConfirmResult::IOError(e) => return eprintln!("error while trying to read stdin: {e:?}"),
             }
         }
     }
 }
-// TODO when saving to clipboard, it assumes that the original clipboard content was the input image
