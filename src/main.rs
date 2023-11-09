@@ -13,6 +13,7 @@ use std::{
     io,
     io::Write,
     path::Path,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Parser, Debug)]
@@ -85,6 +86,14 @@ fn overlay(bg: &DynamicImage, fg: &DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgb8(final_image)
 }
 
+/// Returns a hyphen (`"-"`) followed by the current timestamp in milliseconds if successful, otherwise an empty string
+fn get_timestamp_suffix() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => return format!("-{}", duration.as_millis()),
+        Err(_) => return "".to_string(),
+    }
+}
+
 enum ConfirmResult {
     Continue,
     Stop,
@@ -118,9 +127,9 @@ fn main() {
         Some(in_path) => match ImageReader::open(in_path) {
             Ok(opened) => match opened.decode() {
                 Ok(img) => img,
-                Err(e) => return eprintln!("error decoding image: {e}"),
+                Err(e) => return eprintln!("error decoding image: {e:?}"),
             },
-            Err(e) => return eprintln!("error opening image: {e}"),
+            Err(e) => return eprintln!("error opening image: {e:?}"),
         },
         None => match Clipboard::new() {
             Ok(mut clipboard) => {
@@ -144,10 +153,10 @@ fn main() {
                             }
                         }
                     }
-                    Err(e) => return eprintln!("error reading clipboard image: {e}"),
+                    Err(e) => return eprintln!("error reading clipboard image: {e:?}"),
                 }
             }
-            Err(e) => return eprintln!("error accessing clipboard: {e}"),
+            Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
         },
     };
     println!("creating background...");
@@ -187,7 +196,8 @@ fn main() {
                     output_path.display()
                 )) {
                     ConfirmResult::Continue => {
-                        let backup_path = temp_dir.join(Path::new("BACKUP"));
+                        let backup_path =
+                            temp_dir.join(Path::new(&format!("BACKUP{}", get_timestamp_suffix())));
                         match rename(&output_path, &backup_path) {
                             Ok(_) => {
                                 println!(
@@ -197,9 +207,8 @@ fn main() {
                                 )
                             }
                             Err(e) => eprintln!(
-                                "error backing up original file at {:?}: {}",
+                                "error backing up original file at {:?}: {e:?}",
                                 output_path.display(),
-                                e
                             ),
                         }
                     }
@@ -207,19 +216,22 @@ fn main() {
                         return println!("please rerun with a different output path");
                     }
                     ConfirmResult::IOError(e) => {
-                        return eprintln!("error while trying to read stdin: {e}");
+                        return eprintln!("error while trying to read stdin: {e:?}");
                     }
                 }
             }
             match final_image.save(output_path) {
                 Ok(_) => return println!("saved image to {:?}!", output_path.display()),
                 Err(e) => {
-                    return eprintln!("error saving image to {:?}: {}", output_path.display(), e)
+                    return eprintln!("error saving image to {:?}: {e:?}", output_path.display())
                 }
             };
         }
         None => {
-            let backup_path = temp_dir.join(Path::new("clipboard.png"));
+            let backup_path = temp_dir.join(Path::new(&format!(
+                "CLIPBOARD{}.png",
+                get_timestamp_suffix()
+            )));
             match image.save(&backup_path) {
                 Ok(_) => {
                     println!(
@@ -227,7 +239,7 @@ fn main() {
                         backup_path.display()
                     );
                 }
-                Err(e) => eprintln!("error backing up original clipboard content: {e}"),
+                Err(e) => eprintln!("error backing up original clipboard content: {e:?}"),
             }
             let bytes = get_colors_alpha(&final_image).join(&[][..]);
             let image_data = ImageData {
@@ -238,9 +250,9 @@ fn main() {
             match Clipboard::new() {
                 Ok(mut clipboard) => match clipboard.set_image(image_data) {
                     Ok(_) => return println!("edited image copied to clipboard!"),
-                    Err(e) => return eprintln!("error copying edited image to clipboard: {e}"),
+                    Err(e) => return eprintln!("error copying edited image to clipboard: {e:?}"),
                 },
-                Err(e) => return eprintln!("error accessing clipboard: {e}"),
+                Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
             }
         }
     }
