@@ -16,14 +16,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// A tool to create a square frame with a blurred background for any image, to match the aspect ratio 1:1
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// input file path, defaults to clipboard
+    /// Input file path, defaults to clipboard
     #[arg(short, long)]
     input_path: Option<String>,
 
-    /// output file path, defaults to clipboard
+    /// Output file path, defaults to clipboard
     #[arg(short, long)]
     output_path: Option<String>,
 }
@@ -124,62 +125,64 @@ fn confirm(msg: String) -> ConfirmResult {
 fn main() {
     let args = Args::parse();
     let image = match args.input_path {
-        Some(in_path) => match ImageReader::open(in_path) {
-            Ok(opened) => match opened.decode() {
-                Ok(img) => img,
-                Err(e) => return eprintln!("error decoding image: {e:?}"),
-            },
-            Err(e) => return eprintln!("error opening image: {e:?}"),
+        Some(in_path) => match ImageReader::open(&in_path) {
+            Ok(opened) => {
+                println!("Opened image from {in_path:?}");
+                match opened.decode() {
+                    Ok(img) => {
+                        println!("Decoded image");
+                        img
+                    }
+                    Err(e) => return eprintln!("Error decoding image: {e:?}"),
+                }
+            }
+            Err(e) => return eprintln!("Error opening image: {e:?}"),
         },
         None => match Clipboard::new() {
             Ok(mut clipboard) => {
-                println!("accessed clipboard");
+                println!("Accessed clipboard");
                 match clipboard.get_image() {
                     Ok(img) => {
-                        println!("read clipboard image");
+                        println!("Read clipboard image");
                         match ImageBuffer::from_raw(
                             img.width.try_into().unwrap(),
                             img.height.try_into().unwrap(),
                             img.bytes.into_owned(),
                         ) {
                             Some(img) => {
-                                println!("constructed clipboard image");
+                                println!("Constructed clipboard image");
                                 DynamicImage::ImageRgba8(img)
                             }
-                            None => {
-                                return eprintln!(
-                                    "couldn't construct clipboard image (perhaps it is empty?)"
-                                )
-                            }
+                            None => return eprintln!("Couldn't construct clipboard image"),
                         }
                     }
-                    Err(e) => return eprintln!("error reading clipboard image: {e:?}"),
+                    Err(e) => return eprintln!("Error reading clipboard image: {e:?}"),
                 }
             }
-            Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
+            Err(e) => return eprintln!("Error accessing clipboard: {e:?}"),
         },
     };
-    println!("creating background...");
+    println!("Creating blurred background...");
     let (width, height) = (image.width(), image.height());
     let sqside = max(width, height);
     let factor = min(width, height);
     let resized_width = width * sqside / factor;
     let resized_height = height * sqside / factor;
     let mut bg = image.resize(resized_width, resized_height, FilterType::Triangle);
-    println!("upscale: done");
+    println!("Upscale: done");
     bg = bg.crop(
         (resized_width - sqside) / 2,
         (resized_height - sqside) / 2,
         sqside,
         sqside,
     );
-    println!("square crop: done");
+    println!("Square crop: done");
     bg = blur(&bg, 16.);
-    println!("gaussian blur: done");
-    println!("background created");
-    println!("constructing final image");
+    println!("Gaussian blur: done");
+    println!("Background created");
+    println!("Constructing final image...");
     let final_image = overlay(&bg, &image);
-    println!("done!");
+    println!("Done!");
     let temp_dir = temp_dir();
     match args.output_path {
         Some(out_path) => {
@@ -201,34 +204,34 @@ fn main() {
                         match rename(&output_path, &backup_path) {
                             Ok(_) => {
                                 println!(
-                                    "original file at {:?} backed up to: {:?}",
+                                    "Original file at {:?} backed up to: {:?}",
                                     output_path.display(),
                                     backup_path.display()
                                 )
                             }
                             Err(e) => eprintln!(
-                                "error backing up original file at {:?}: {e:?}",
+                                "Error backing up original file at {:?}: {e:?}",
                                 output_path.display(),
                             ),
                         }
                     }
                     ConfirmResult::Stop => {
-                        return println!("please rerun with a different output path, or without an output path (to copy the result to the clipboard)");
+                        return println!("Please rerun with a different output path, or without an output path (to copy the result to the clipboard)");
                     }
                     ConfirmResult::IOError(e) => {
-                        return eprintln!("error while trying to read stdin: {e:?}");
+                        return eprintln!("Error while trying to read stdin: {e:?}");
                     }
                 }
             }
             match final_image.save(output_path) {
-                Ok(_) => return println!("saved image to {:?}!", output_path.display()),
+                Ok(_) => return println!("Saved image to {:?}!", output_path.display()),
                 Err(e) => {
-                    return eprintln!("error saving image to {:?}: {e:?}", output_path.display())
+                    return eprintln!("Error saving image to {:?}: {e:?}", output_path.display())
                 }
             };
         }
         None => {
-            match confirm("overwrite clipboard content with edited image? [y/n]: ".to_string()) {
+            match confirm("Overwrite clipboard content with edited image? [y/n]: ".to_string()) {
                 ConfirmResult::Continue => {
                     let bytes = get_colors_alpha(&final_image).join(&[][..]);
                     let image_data = ImageData {
@@ -238,14 +241,14 @@ fn main() {
                     };
                     match Clipboard::new() {
                         Ok(mut clipboard) => match clipboard.set_image(image_data) {
-                            Ok(_) => return println!("edited image copied to clipboard!"),
-                            Err(e) => return eprintln!("error copying edited image to clipboard: {e:?}"),
+                            Ok(_) => return println!("Edited image copied to clipboard!"),
+                            Err(e) => return eprintln!("Error copying edited image to clipboard: {e:?}"),
                         },
-                        Err(e) => return eprintln!("error accessing clipboard: {e:?}"),
+                        Err(e) => return eprintln!("Error accessing clipboard: {e:?}"),
                     }
                 },
-                    ConfirmResult::Stop => return println!("please rerun with the clipboard content backed up, or with an output path specified (see '--help')"),
-                    ConfirmResult::IOError(e) => return eprintln!("error while trying to read stdin: {e:?}"),
+                    ConfirmResult::Stop => return println!("Please rerun with the clipboard content backed up, or with an output path specified (see '--help')"),
+                    ConfirmResult::IOError(e) => return eprintln!("Error while trying to read stdin: {e:?}"),
             }
         }
     }
