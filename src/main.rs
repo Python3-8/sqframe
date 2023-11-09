@@ -257,3 +257,4 @@ fn main() {
         }
     }
 }
+// TODO when saving to clipboard, it assumes that the original clipboard content was the input image
